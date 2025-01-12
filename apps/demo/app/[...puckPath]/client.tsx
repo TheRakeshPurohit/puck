@@ -1,52 +1,27 @@
 "use client";
 
-import { Config, Data } from "@measured/puck";
-import { Puck } from "@measured/puck/components/Puck";
-import { Render } from "@measured/puck/components/Render";
-import { Framework } from "../Framework";
+import { Button, Puck, Render } from "@/core";
+import headingAnalyzer from "@/plugin-heading-analyzer/src/HeadingAnalyzer";
+import config from "../../config";
+import { useDemoData } from "../../lib/use-demo-data";
 import { useEffect, useState } from "react";
-import { Button } from "@measured/puck/components/Button";
-import headingAnalyzer from "@measured/puck-plugin-heading-analyzer/src/HeadingAnalyzer";
+import dynamic from "next/dynamic";
 
-const isBrowser = typeof window !== "undefined";
-
-export function Client({
-  path,
-  isEdit,
-  framework,
-}: {
-  path: string;
-  isEdit: boolean;
-  framework: Framework;
-}) {
-  const config: Config = require(`../configs/${framework}/`).default;
-  const initialData: Data =
-    require(`../configs/${framework}/`).initialData || {};
-
-  // unique b64 key that updates each time we add / remove components
-  const componentKey = Buffer.from(
-    Object.keys(config.components).join("-")
-  ).toString("base64");
-
-  const key = `puck-demo:${framework}:${componentKey}:${path}`;
-
-  const [data] = useState<Data>(() => {
-    if (isBrowser) {
-      const dataStr = localStorage.getItem(key);
-
-      if (dataStr) {
-        return JSON.parse(dataStr);
-      }
-
-      return initialData[path] || undefined;
-    }
+export function Client({ path, isEdit }: { path: string; isEdit: boolean }) {
+  const { data, resolvedData, key } = useDemoData({
+    path,
+    isEdit,
   });
 
+  const [isClient, setIsClient] = useState(false);
+
   useEffect(() => {
-    if (!isEdit) {
-      document.title = data?.root?.title || "";
-    }
-  }, [data, isEdit]);
+    setIsClient(true);
+  }, []);
+
+  if (!isClient) return null;
+
+  const params = new URL(window.location.href).searchParams;
 
   if (isEdit) {
     return (
@@ -54,25 +29,34 @@ export function Client({
         <Puck
           config={config}
           data={data}
-          onPublish={async (data: Data) => {
+          onPublish={async (data) => {
             localStorage.setItem(key, JSON.stringify(data));
           }}
           plugins={[headingAnalyzer]}
           headerPath={path}
-          renderHeaderActions={() => (
-            <>
-              <Button href={path} newTab variant="secondary">
-                View page
-              </Button>
-            </>
-          )}
+          iframe={{
+            enabled: params.get("disableIframe") === "true" ? false : true,
+          }}
+          overrides={{
+            headerActions: ({ children }) => (
+              <>
+                <div>
+                  <Button href={path} newTab variant="secondary">
+                    View page
+                  </Button>
+                </div>
+
+                {children}
+              </>
+            ),
+          }}
         />
       </div>
     );
   }
 
-  if (data) {
-    return <Render config={config} data={data} />;
+  if (data.content) {
+    return <Render config={config} data={resolvedData} />;
   }
 
   return (

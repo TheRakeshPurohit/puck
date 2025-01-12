@@ -1,34 +1,41 @@
-import { ReactElement, ReactNode, useEffect, useState } from "react";
+import { ReactElement, useEffect, useState } from "react";
 
-import { Data } from "@measured/puck";
-import { Plugin } from "@measured/puck/types/Plugin";
-import { SidebarSection } from "@measured/puck/components/SidebarSection";
-import { OutlineList } from "@measured/puck/components/OutlineList";
+import styles from "./HeadingAnalyzer.module.css";
 
-import { scrollIntoView } from "@measured/puck/lib/scroll-into-view";
+import { usePuck } from "@measured/puck";
+import { Plugin } from "@/core/types";
+import { SidebarSection } from "@/core/components/SidebarSection";
+import { OutlineList } from "@/core/components/OutlineList";
 
-import ReactFromJSON from "react-from-json";
+import { scrollIntoView } from "@/core/lib/scroll-into-view";
+import { getFrame } from "@/core/lib/get-frame";
 
-const dataAttr = "data-puck-heading-analyzer-id";
+import { getClassNameFactory } from "@/core/lib";
 
-const getOutline = ({
-  addDataAttr = false,
-}: { addDataAttr?: boolean } = {}) => {
-  const headings = window.document
-    .querySelector(".puck-root")!
-    .querySelectorAll("h1,h2,h3,h4,h5,h6");
+const getClassName = getClassNameFactory("HeadingAnalyzer", styles);
+const getClassNameItem = getClassNameFactory("HeadingAnalyzerItem", styles);
 
-  const _outline: { rank: number; text: string; analyzeId: string }[] = [];
+import ReactFromJSONModule from "react-from-json";
+
+// Synthetic import
+const ReactFromJSON =
+  (ReactFromJSONModule as unknown as { default: typeof ReactFromJSONModule })
+    .default || ReactFromJSONModule;
+
+const getOutline = ({ frame }: { frame?: Element | Document } = {}) => {
+  const headings = frame?.querySelectorAll("h1,h2,h3,h4,h5,h6") || [];
+
+  const _outline: {
+    rank: number;
+    text: string;
+    element: HTMLElement;
+  }[] = [];
 
   headings.forEach((item, i) => {
-    if (addDataAttr) {
-      item.setAttribute(dataAttr, i.toString());
-    }
-
     _outline.push({
       rank: parseInt(item.tagName.split("H")[1]),
       text: item.textContent!,
-      analyzeId: i.toString(),
+      element: item as HTMLElement,
     });
   });
 
@@ -41,10 +48,11 @@ type Block = {
   children?: Block[];
   missing?: boolean;
   analyzeId?: string;
+  element?: HTMLElement;
 };
 
-function buildHierarchy(): Block[] {
-  const headings = getOutline({ addDataAttr: true });
+function buildHierarchy(frame: Element | Document): Block[] {
+  const headings = getOutline({ frame });
 
   const root = { rank: 0, children: [], text: "" }; // Placeholder root node
   let path: Block[] = [root];
@@ -53,8 +61,8 @@ function buildHierarchy(): Block[] {
     const node: Block = {
       rank: heading.rank,
       text: heading.text,
-      analyzeId: heading.analyzeId,
       children: [],
+      element: heading.element,
     };
 
     // When encountering an h1, reset the path to only the root
@@ -87,113 +95,135 @@ function buildHierarchy(): Block[] {
   return root.children;
 }
 
-const HeadingOutlineAnalyer = ({
-  children,
-  data,
-}: {
-  children: ReactNode;
-  data: Data;
-}) => {
+export const HeadingAnalyzer = () => {
+  const { appState } = usePuck();
   const [hierarchy, setHierarchy] = useState<Block[]>([]);
-  const [firstRender, setFirstRender] = useState(true);
 
   // Re-render when content changes
   useEffect(() => {
-    // We need to delay to allow remainder of page to render first
+    const frame = getFrame();
+    const entry = frame?.querySelector(`[data-puck-entry]`);
 
-    if (firstRender) {
-      setTimeout(() => {
-        setHierarchy(buildHierarchy());
-        setFirstRender(false);
-      }, 100);
-    } else {
-      setHierarchy(buildHierarchy());
-    }
-  }, [data.content]);
+    if (!entry) return;
+
+    setHierarchy(buildHierarchy(entry));
+
+    const observer = new MutationObserver(() => {
+      setHierarchy(buildHierarchy(entry));
+    });
+
+    observer.observe(entry, { subtree: true, childList: true });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [appState.data]);
 
   return (
-    <>
-      {children}
-      <SidebarSection title="Heading Outline">
-        {hierarchy.length === 0 && <div>No headings.</div>}
+    <div className={getClassName()}>
+      <small
+        className={getClassName("cssWarning")}
+        style={{
+          color: "var(--puck-color-red-04)",
+          display: "block",
+          marginBottom: 16,
+        }}
+      >
+        Heading analyzer styles not loaded. Please review the{" "}
+        <a href="https://github.com/measuredco/puck/blob/main/packages/plugin-heading-analyzer/README.md">
+          README
+        </a>
+        .
+      </small>
 
-        <OutlineList>
-          <ReactFromJSON<{
-            Root: (any) => ReactElement;
-            OutlineListItem: (any) => ReactElement;
-          }>
-            mapping={{
-              Root: (props) => <>{props.children}</>,
-              OutlineListItem: (props) => (
-                <OutlineList.Item>
-                  <OutlineList.Clickable>
-                    <small
-                      onClick={
-                        typeof props.analyzeId == "undefined"
-                          ? undefined
-                          : (e) => {
-                              e.stopPropagation();
+      {hierarchy.length === 0 && <div>No headings.</div>}
 
-                              const el = document.querySelector(
-                                `[${dataAttr}="${props.analyzeId}"]`
-                              ) as HTMLElement;
+      <OutlineList>
+        <ReactFromJSON<{
+          Root: (props: any) => ReactElement;
+          OutlineListItem: (props: any) => ReactElement;
+        }>
+          mapping={{
+            Root: (props) => <>{props.children}</>,
+            OutlineListItem: (props) => (
+              <OutlineList.Item>
+                <OutlineList.Clickable>
+                  <small
+                    className={getClassNameItem({ missing: props.missing })}
+                    onClick={
+                      typeof props.element == "undefined"
+                        ? undefined
+                        : (e) => {
+                            e.stopPropagation();
 
-                              const oldStyle = { ...el.style };
+                            const el = props.element;
 
-                              if (el) {
-                                scrollIntoView(el);
+                            const oldStyle = { ...el.style };
 
-                                el.style.outline =
-                                  "4px solid var(--puck-color-rose-5)";
-                                el.style.outlineOffset = "4px";
+                            if (el) {
+                              scrollIntoView(el);
 
-                                setTimeout(() => {
-                                  el.style.outline = oldStyle.outline || "";
-                                  el.style.outlineOffset =
-                                    oldStyle.outlineOffset || "";
-                                }, 2000);
-                              }
+                              el.style.outline =
+                                "4px solid var(--puck-color-rose-06)";
+                              el.style.outlineOffset = "4px";
+
+                              setTimeout(() => {
+                                el.style.outline = oldStyle.outline || "";
+                                el.style.outlineOffset =
+                                  oldStyle.outlineOffset || "";
+                              }, 2000);
                             }
-                      }
-                    >
-                      {props.missing ? (
-                        <span style={{ color: "var(--puck-color-red)" }}>
-                          <b>H{props.rank}</b>: Missing
-                        </span>
-                      ) : (
-                        <span>
-                          <b>H{props.rank}</b>: {props.text}
-                        </span>
-                      )}
-                    </small>
-                  </OutlineList.Clickable>
-                  <OutlineList>{props.children}</OutlineList>
-                </OutlineList.Item>
-              ),
-            }}
-            entry={{
-              props: { children: hierarchy },
-              type: "Root",
-            }}
-            mapProp={(prop) => {
-              if (prop && prop.rank) {
-                return {
-                  type: "OutlineListItem",
-                  props: prop,
-                };
-              }
+                          }
+                    }
+                  >
+                    {props.missing ? (
+                      <>
+                        <b>H{props.rank}</b>: Missing
+                      </>
+                    ) : (
+                      <>
+                        <b>H{props.rank}</b>: {props.text}
+                      </>
+                    )}
+                  </small>
+                </OutlineList.Clickable>
+                <OutlineList>{props.children}</OutlineList>
+              </OutlineList.Item>
+            ),
+          }}
+          entry={{
+            props: { children: hierarchy },
+            type: "Root",
+          }}
+          mapProp={(prop) => {
+            if (prop && prop.rank) {
+              return {
+                type: "OutlineListItem",
+                props: prop,
+              };
+            }
 
-              return prop;
-            }}
-          />
-        </OutlineList>
-      </SidebarSection>
-    </>
+            return prop;
+          }}
+        />
+      </OutlineList>
+    </div>
   );
 };
 
-const HeadingAnalyzer: Plugin = {
-  renderRootFields: HeadingOutlineAnalyer,
+const headingAnalyzer: Plugin = {
+  overrides: {
+    fields: ({ children, itemSelector }) => (
+      <>
+        {children}
+        <div style={{ display: itemSelector ? "none" : "block" }}>
+          <SidebarSection title="Heading Outline">
+            <HeadingAnalyzer />
+          </SidebarSection>
+        </div>
+      </>
+    ),
+  },
 };
 
-export default HeadingAnalyzer;
+export default headingAnalyzer;

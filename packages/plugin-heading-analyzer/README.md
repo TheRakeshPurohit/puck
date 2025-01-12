@@ -13,6 +13,7 @@ npm i @measured/puck-plugin-heading-analyzer
 ```jsx
 import { Puck } from "@measured/puck";
 import headingAnalyzer from "@measured/puck-plugin-heading-analyzer";
+import "@measured/puck-plugin-heading-analyzer/dist/index.css";
 
 ...
 
@@ -30,4 +31,4 @@ export function Page() {
 
 ## License
 
-MIT © [Measured Co.](https://github.com/measuredco)
+MIT © [Measured Corporation Ltd](https://measured.co)

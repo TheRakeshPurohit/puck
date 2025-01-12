@@ -1,25 +1,30 @@
-import { Data } from "../types/Config";
-import { addToZoneCache } from "./reducer";
+import type { AppState, Data } from "../types";
+import { addToZoneCache } from "../reducer/data";
 
 /**
  * Flush out all zones and let them re-register using the zone cache
  *
- * @param data initial data
- * @returns data with zones removed
+ * @param appState initial app state
+ * @returns appState with zones removed from data
  */
-export const flushZones = (data: Data): Data => {
-  const containsZones = typeof data.zones !== "undefined";
+export const flushZones = <UserData extends Data>(
+  appState: AppState | AppState<UserData>
+): AppState | AppState<UserData> => {
+  const containsZones = typeof appState.data.zones !== "undefined";
 
   if (containsZones) {
-    Object.keys(data.zones || {}).forEach((zone) => {
-      addToZoneCache(zone, data.zones![zone]);
+    Object.keys(appState.data.zones || {}).forEach((zone) => {
+      addToZoneCache(zone, appState.data.zones![zone]);
     });
 
     return {
-      ...data,
-      zones: {},
+      ...appState,
+      data: {
+        ...appState.data,
+        zones: {},
+      },
     };
   }
 
-  return data;
+  return appState;
 };

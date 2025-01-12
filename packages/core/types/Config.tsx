@@ -1,113 +1,91 @@
-import { ReactElement } from "react";
-import { ReactNode } from "react";
+import type { JSX } from "react";
+import { Fields } from "./Fields";
+import { ComponentData, RootData } from "./Data";
 
-export type Adaptor<AdaptorParams = {}> = {
-  name: string;
-  fetchList: (
-    adaptorParams?: AdaptorParams
-  ) => Promise<Record<string, any>[] | null>;
-};
+import { AsFieldProps, WithId, WithPuckProps } from "./Utils";
+import { AppState } from "./AppState";
+import { DefaultComponentProps, DefaultRootRenderProps } from "./Props";
+import { Permissions } from "./API";
 
-type WithId<T> = T & {
-  id: string;
-};
-
-export type Field<
-  Props extends { [key: string]: any } = { [key: string]: any }
-> = {
-  type:
-    | "text"
-    | "textarea"
-    | "number"
-    | "select"
-    | "array"
-    | "external"
-    | "radio"
-    | "custom";
-  label?: string;
-  adaptor?: Adaptor;
-  adaptorParams?: object;
-  arrayFields?: {
-    [SubPropName in keyof Props]: Field<Props[SubPropName][0]>;
-  };
-  getItemSummary?: (item: Props, index?: number) => string;
-  defaultItemProps?: Props;
-  render?: (props: {
-    field: Field;
-    name: string;
-    value: any;
-    onChange: (value: any) => void;
-    readOnly?: boolean;
-  }) => ReactElement;
-  options?: {
-    label: string;
-    value: string | number | boolean;
-  }[];
-};
-
-export type DefaultRootProps = {
-  children: ReactNode;
-  title: string;
-  editMode: boolean;
-  [key: string]: any;
-};
-
-export type DefaultComponentProps = { [key: string]: any; editMode?: boolean };
-
-export type Fields<
-  ComponentProps extends DefaultComponentProps = DefaultComponentProps
-> = {
-  [PropName in keyof Omit<
-    Required<ComponentProps>,
-    "children" | "editMode"
-  >]: Field<ComponentProps[PropName][0]>;
-};
-
-export type Content<
-  Props extends { [key: string]: any } = { [key: string]: any }
-> = MappedItem<Props>[];
+export type PuckComponent<Props> = (
+  props: WithId<WithPuckProps<Props>>
+) => JSX.Element;
 
 export type ComponentConfig<
-  ComponentProps extends DefaultComponentProps = DefaultComponentProps,
-  DefaultProps = ComponentProps
+  RenderProps extends DefaultComponentProps = DefaultComponentProps,
+  FieldProps extends DefaultComponentProps = RenderProps,
+  DataShape = Omit<ComponentData<FieldProps>, "type">
 > = {
-  render: (props: WithId<ComponentProps>) => ReactElement;
-  defaultProps?: DefaultProps;
-  fields?: Fields<ComponentProps>;
+  render: PuckComponent<RenderProps>;
+  label?: string;
+  defaultProps?: FieldProps;
+  fields?: Fields<FieldProps>;
+  permissions?: Partial<Permissions>;
+  inline?: boolean;
+  resolveFields?: (
+    data: DataShape,
+    params: {
+      changed: Partial<Record<keyof FieldProps, boolean>>;
+      fields: Fields<FieldProps>;
+      lastFields: Fields<FieldProps>;
+      lastData: DataShape | null;
+      appState: AppState;
+      parent: ComponentData | null;
+    }
+  ) => Promise<Fields<FieldProps>> | Fields<FieldProps>;
+  resolveData?: (
+    data: DataShape,
+    params: {
+      changed: Partial<Record<keyof FieldProps, boolean>>;
+      lastData: DataShape | null;
+    }
+  ) =>
+    | Promise<{
+        props?: Partial<FieldProps>;
+        readOnly?: Partial<Record<keyof FieldProps, boolean>>;
+      }>
+    | {
+        props?: Partial<FieldProps>;
+        readOnly?: Partial<Record<keyof FieldProps, boolean>>;
+      };
+  resolvePermissions?: (
+    data: DataShape,
+    params: {
+      changed: Partial<Record<keyof FieldProps, boolean>>;
+      lastPermissions: Partial<Permissions>;
+      permissions: Partial<Permissions>;
+      appState: AppState;
+      lastData: DataShape | null;
+    }
+  ) => Promise<Partial<Permissions>> | Partial<Permissions>;
+};
+
+type Category<ComponentName> = {
+  components?: ComponentName[];
+  title?: string;
+  visible?: boolean;
+  defaultExpanded?: boolean;
 };
 
 export type Config<
-  Props extends { [key: string]: any } = { [key: string]: any },
-  RootProps extends DefaultRootProps = DefaultRootProps
+  Props extends DefaultComponentProps = DefaultComponentProps,
+  RootProps extends DefaultComponentProps = any,
+  CategoryName extends string = string
 > = {
+  categories?: Record<CategoryName, Category<keyof Props>> & {
+    other?: Category<keyof Props>;
+  };
   components: {
-    [ComponentName in keyof Props]: ComponentConfig<
-      Props[ComponentName],
-      Props[ComponentName]
+    [ComponentName in keyof Props]: Omit<
+      ComponentConfig<Props[ComponentName], Props[ComponentName]>,
+      "type"
     >;
   };
-  root?: ComponentConfig<
-    RootProps & { children: ReactNode },
-    Partial<RootProps & { children: ReactNode }>
+  root?: Partial<
+    ComponentConfig<
+      DefaultRootRenderProps<RootProps>,
+      AsFieldProps<RootProps>,
+      RootData<AsFieldProps<RootProps>>
+    >
   >;
-};
-
-type MappedItem<Props extends { [key: string]: any } = { [key: string]: any }> =
-  {
-    type: keyof Props;
-    props: WithId<{
-      [key: string]: any;
-    }>;
-  };
-
-export type Data<
-  Props extends { [key: string]: any } = { [key: string]: any },
-  RootProps extends { title: string; [key: string]: any } = {
-    title: string;
-    [key: string]: any;
-  }
-> = {
-  root: RootProps;
-  content: Content<Props>;
-  zones?: Record<string, Content<Props>>;
 };

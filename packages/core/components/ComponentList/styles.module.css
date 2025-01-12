@@ -1,34 +1,55 @@
 .ComponentList {
-  display: grid;
-  font-family: var(--puck-font-stack);
-  grid-template-columns: 1fr;
   max-width: 100%;
-  grid-gap: 12px;
 }
 
-.ComponentList-item,
-.ComponentList-itemShadow {
-  background: white;
-  padding: 12px;
+.ComponentList--isExpanded + .ComponentList {
+  margin-top: 12px;
+}
+
+.ComponentList-content {
+  display: none;
+}
+
+.ComponentList--isExpanded > .ComponentList-content {
+  display: block;
+}
+
+.ComponentList-title {
+  background-color: transparent;
+  border: 0;
+  color: var(--puck-color-grey-05);
+  cursor: pointer;
   display: flex;
-  border: 1px var(--puck-color-grey-8) solid;
-  border-radius: 8px;
-  font-size: var(--puck-font-size-xxs);
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  cursor: grab;
+  font: inherit;
+  font-size: var(--puck-font-size-xxxs);
+  list-style: none;
+  margin-bottom: 6px;
+  padding: 8px;
+  text-transform: uppercase;
+  transition: background-color 50ms ease-in, color 50ms ease-in;
+  gap: 4px;
+  border-radius: 4px;
+  width: 100%;
 }
 
-.ComponentList-item:last-of-type,
-.ComponentList-itemShadow:last-of-type {
-  margin-bottom: 0px;
+.ComponentList-title:focus-visible {
+  outline: 2px solid var(--puck-color-azure-05);
+  outline-offset: 2px;
 }
 
-.ComponentList-itemIcon {
-  color: var(--puck-color-grey-4);
+@media (hover: hover) and (pointer: fine) {
+  .ComponentList-title:hover {
+    background-color: var(--puck-color-azure-11);
+    color: var(--puck-color-azure-04);
+    transition: none;
+  }
 }
 
-.ComponentList-item:hover {
-  background-color: var(--puck-color-azure-9);
+.ComponentList-title:active {
+  background-color: var(--puck-color-azure-10);
+  transition: none;
+}
+
+.ComponentList-titleIcon {
+  margin-left: auto;
 }
