@@ -1,551 +1,559 @@
-"use client";
-
 import {
   ReactElement,
   ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useState,
 } from "react";
-import { DragDropContext, DragStart, DragUpdate } from "react-beautiful-dnd";
-import type { Config, Data, Field } from "../../types/Config";
-import { InputOrGroup } from "../InputOrGroup";
-import { ComponentList } from "../ComponentList";
-import { filter } from "../../lib";
+
+import type {
+  UiState,
+  IframeConfig,
+  OnAction,
+  Overrides,
+  Permissions,
+  Plugin,
+  InitialHistory,
+  UserGenerics,
+  Config,
+  Data,
+} from "../../types";
 import { Button } from "../Button";
 
-import { Plugin } from "../../types/Plugin";
-import { usePlaceholderStyle } from "../../lib/use-placeholder-style";
-
 import { SidebarSection } from "../SidebarSection";
-import { Globe, Sidebar } from "react-feather";
+import {
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  PanelLeft,
+  PanelRight,
+} from "lucide-react";
 import { Heading } from "../Heading";
 import { IconButton } from "../IconButton/IconButton";
-import { DropZone, DropZoneProvider, dropZoneContext } from "../DropZone";
-import { rootDroppableId } from "../../lib/root-droppable-id";
-import { ItemSelector, getItem } from "../../lib/get-item";
-import { PuckAction, StateReducer, createReducer } from "../../lib/reducer";
-import { LayerTree } from "../LayerTree";
-import { findZonesForArea } from "../../lib/find-zones-for-area";
-import { areaContainsZones } from "../../lib/area-contains-zones";
+import { getItem } from "../../lib/get-item";
+import { PuckAction, createReducer } from "../../reducer";
 import { flushZones } from "../../lib/flush-zones";
+import getClassNameFactory from "../../lib/get-class-name-factory";
+import { AppProvider, defaultAppState } from "./context";
+import { MenuBar } from "../MenuBar";
+import styles from "./styles.module.css";
+import { Fields } from "./components/Fields";
+import { Components } from "./components/Components";
+import { Preview } from "./components/Preview";
+import { Outline } from "./components/Outline";
+import { usePuckHistory } from "../../lib/use-puck-history";
+import { useHistoryStore } from "../../lib/use-history-store";
+import { Canvas } from "./components/Canvas";
+import { defaultViewports } from "../ViewportControls/default-viewports";
+import { Viewports } from "../../types";
+import { DragDropContext } from "../DragDropContext";
+import { useLoadedOverrides } from "../../lib/use-loaded-overrides";
+import { DefaultOverride } from "../DefaultOverride";
+import { useInjectGlobalCss } from "../../lib/use-inject-css";
+import { usePreviewModeHotkeys } from "../../lib/use-preview-mode-hotkeys";
 
-const Field = () => {};
+const getClassName = getClassNameFactory("Puck", styles);
+const getLayoutClassName = getClassNameFactory("PuckLayout", styles);
 
-const defaultPageFields: Record<string, Field> = {
-  title: { type: "text" },
-};
-
-const PluginRenderer = ({
+export function Puck<
+  UserConfig extends Config = Config,
+  G extends UserGenerics<UserConfig> = UserGenerics<UserConfig>
+>({
   children,
-  data,
-  plugins,
-  renderMethod,
-}: {
-  children: ReactNode;
-  data: Data;
-  plugins;
-  renderMethod: "renderRoot" | "renderRootFields" | "renderFields";
-}) => {
-  return plugins
-    .filter((item) => item[renderMethod])
-    .map((item) => item[renderMethod])
-    .reduce(
-      (accChildren, Item) => <Item data={data}>{accChildren}</Item>,
-      children
-    );
-};
-
-export function Puck({
   config,
-  data: initialData = { content: [], root: { title: "" } },
+  data: initialData,
+  ui: initialUi,
   onChange,
   onPublish,
-  plugins = [],
+  onAction,
+  permissions = {},
+  plugins,
+  overrides,
   renderHeader,
   renderHeaderActions,
   headerTitle,
   headerPath,
+  viewports = defaultViewports,
+  iframe: _iframe,
+  dnd,
+  initialHistory: _initialHistory,
 }: {
-  config: Config;
-  data: Data;
-  onChange?: (data: Data) => void;
-  onPublish: (data: Data) => void;
+  children?: ReactNode;
+  config: UserConfig;
+  data: Partial<G["UserData"] | Data>;
+  ui?: Partial<UiState>;
+  onChange?: (data: G["UserData"]) => void;
+  onPublish?: (data: G["UserData"]) => void;
+  onAction?: OnAction<G["UserData"]>;
+  permissions?: Partial<Permissions>;
   plugins?: Plugin[];
+  overrides?: Partial<Overrides>;
   renderHeader?: (props: {
     children: ReactNode;
-    data: Data;
     dispatch: (action: PuckAction) => void;
+    state: G["UserAppState"];
   }) => ReactElement;
   renderHeaderActions?: (props: {
-    data: Data;
+    state: G["UserAppState"];
     dispatch: (action: PuckAction) => void;
   }) => ReactElement;
   headerTitle?: string;
   headerPath?: string;
+  viewports?: Viewports;
+  iframe?: IframeConfig;
+  dnd?: {
+    disableAutoScroll?: boolean;
+  };
+  initialHistory?: InitialHistory;
 }) {
-  const [reducer] = useState(() => createReducer({ config }));
-  const [data, dispatch] = useReducer<StateReducer>(
-    reducer,
-    flushZones(initialData)
+  const iframe: IframeConfig = {
+    enabled: true,
+    waitForStyles: true,
+    ..._iframe,
+  };
+
+  useInjectGlobalCss(iframe.enabled);
+
+  const [generatedAppState] = useState<G["UserAppState"]>(() => {
+    const initial = { ...defaultAppState.ui, ...initialUi };
+
+    let clientUiState: Partial<G["UserAppState"]["ui"]> = {};
+
+    if (typeof window !== "undefined") {
+      // Hide side bars on mobile
+      if (window.matchMedia("(max-width: 638px)").matches) {
+        clientUiState = {
+          ...clientUiState,
+          leftSideBarVisible: false,
+          rightSideBarVisible: false,
+        };
+      }
+
+      const viewportWidth = window.innerWidth;
+
+      const viewportDifferences = Object.entries(viewports)
+        .map(([key, value]) => ({
+          key,
+          diff: Math.abs(viewportWidth - value.width),
+        }))
+        .sort((a, b) => (a.diff > b.diff ? 1 : -1));
+
+      const closestViewport = viewportDifferences[0].key as any;
+
+      if (iframe.enabled) {
+        clientUiState = {
+          ...clientUiState,
+          viewports: {
+            ...initial.viewports,
+
+            current: {
+              ...initial.viewports.current,
+              height:
+                initialUi?.viewports?.current?.height ||
+                viewports[closestViewport]?.height ||
+                "auto",
+              width:
+                initialUi?.viewports?.current?.width ||
+                viewports[closestViewport]?.width,
+            },
+          },
+        };
+      }
+    }
+
+    // DEPRECATED
+    if (
+      Object.keys(initialData?.root || {}).length > 0 &&
+      !initialData?.root?.props
+    ) {
+      console.error(
+        "Warning: Defining props on `root` is deprecated. Please use `root.props`, or republish this page to migrate automatically."
+      );
+    }
+
+    // Deprecated
+    const rootProps = initialData?.root?.props || initialData?.root || {};
+
+    const defaultedRootProps = {
+      ...config.root?.defaultProps,
+      ...rootProps,
+    };
+
+    return {
+      ...defaultAppState,
+      data: {
+        ...initialData,
+        root: { ...initialData?.root, props: defaultedRootProps },
+        content: initialData.content || [],
+      },
+      ui: {
+        ...initial,
+        ...clientUiState,
+        // Store categories under componentList on state to allow render functions and plugins to modify
+        componentList: config.categories
+          ? Object.entries(config.categories).reduce(
+              (acc, [categoryName, category]) => {
+                return {
+                  ...acc,
+                  [categoryName]: {
+                    title: category.title,
+                    components: category.components,
+                    expanded: category.defaultExpanded,
+                    visible: category.visible,
+                  },
+                };
+              },
+              {}
+            )
+          : {},
+      },
+    } as G["UserAppState"];
+  });
+
+  const { appendData = true } = _initialHistory || {};
+
+  const histories = [
+    ...(_initialHistory?.histories || []),
+    ...(appendData ? [{ state: generatedAppState }] : []),
+  ].map((history) => ({
+    ...history,
+    // Inject default data to enable partial history injections
+    state: { ...generatedAppState, ...history.state },
+  }));
+  const initialHistoryIndex = _initialHistory?.index || histories.length - 1;
+  const initialAppState = histories[initialHistoryIndex].state;
+
+  const historyStore = useHistoryStore({
+    histories,
+    index: initialHistoryIndex,
+  });
+
+  const [reducer] = useState(() =>
+    createReducer<UserConfig, G["UserData"]>({
+      config,
+      record: historyStore.record,
+      onAction,
+    })
   );
 
-  const [itemSelector, setItemSelector] = useState<ItemSelector | null>(null);
+  const [appState, dispatch] = useReducer(
+    reducer,
+    flushZones<G["UserData"]>(initialAppState) as G["UserAppState"]
+  );
+
+  const { data, ui } = appState;
+
+  const history = usePuckHistory({
+    dispatch,
+    initialAppState,
+    historyStore,
+    iframeEnabled: _iframe?.enabled ?? true,
+  });
+
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const { itemSelector, leftSideBarVisible, rightSideBarVisible } = ui;
 
   const selectedItem = itemSelector ? getItem(itemSelector, data) : null;
 
-  const Page = useCallback(
-    (pageProps) => (
-      <PluginRenderer
-        plugins={plugins}
-        renderMethod="renderRoot"
-        data={pageProps.data}
-      >
-        {config.root?.render
-          ? config.root?.render({ ...pageProps, editMode: true })
-          : pageProps.children}
-      </PluginRenderer>
-    ),
-    [config.root]
-  );
-
-  const PageFieldWrapper = useCallback(
-    (props) => (
-      <PluginRenderer
-        plugins={plugins}
-        renderMethod="renderRootFields"
-        data={props.data}
-      >
-        {props.children}
-      </PluginRenderer>
-    ),
-    []
-  );
-
-  const ComponentFieldWrapper = useCallback(
-    (props) => (
-      <PluginRenderer
-        plugins={plugins}
-        renderMethod="renderFields"
-        data={props.data}
-      >
-        {props.children}
-      </PluginRenderer>
-    ),
-    []
-  );
-
-  const FieldWrapper = itemSelector ? ComponentFieldWrapper : PageFieldWrapper;
-
-  const rootFields = config.root?.fields || defaultPageFields;
-
-  let fields = selectedItem
-    ? (config.components[selectedItem.type]?.fields as Record<
-        string,
-        Field<any>
-      >) || {}
-    : rootFields;
-
   useEffect(() => {
-    if (onChange) onChange(data);
+    if (onChange) onChange(data as G["UserData"]);
   }, [data]);
 
-  const { onDragStartOrUpdate, placeholderStyle } = usePlaceholderStyle();
+  // DEPRECATED
+  const rootProps = data.root.props || data.root;
 
-  const [leftSidebarVisible, setLeftSidebarVisible] = useState(true);
+  const toggleSidebars = useCallback(
+    (sidebar: "left" | "right") => {
+      const widerViewport = window.matchMedia("(min-width: 638px)").matches;
+      const sideBarVisible =
+        sidebar === "left" ? leftSideBarVisible : rightSideBarVisible;
+      const oppositeSideBar =
+        sidebar === "left" ? "rightSideBarVisible" : "leftSideBarVisible";
 
-  const [draggedItem, setDraggedItem] = useState<
-    DragStart & Partial<DragUpdate>
-  >();
+      dispatch({
+        type: "setUi",
+        ui: {
+          [`${sidebar}SideBarVisible`]: !sideBarVisible,
+          ...(!widerViewport ? { [oppositeSideBar]: false } : {}),
+        },
+      });
+    },
+    [dispatch, leftSideBarVisible, rightSideBarVisible]
+  );
+
+  useEffect(() => {
+    if (!window.matchMedia("(min-width: 638px)").matches) {
+      dispatch({
+        type: "setUi",
+        ui: {
+          leftSideBarVisible: false,
+          rightSideBarVisible: false,
+        },
+      });
+    }
+
+    const handleResize = () => {
+      if (!window.matchMedia("(min-width: 638px)").matches) {
+        dispatch({
+          type: "setUi",
+          ui: (ui: UiState) => ({
+            ...ui,
+            ...(ui.rightSideBarVisible ? { leftSideBarVisible: false } : {}),
+          }),
+        });
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  // DEPRECATED
+  const defaultHeaderRender = useMemo((): Overrides["header"] => {
+    if (renderHeader) {
+      console.warn(
+        "`renderHeader` is deprecated. Please use `overrides.header` and the `usePuck` hook instead"
+      );
+
+      const RenderHeader = ({ actions, ...props }: any) => {
+        const Comp = renderHeader!;
+
+        return (
+          <Comp {...props} dispatch={dispatch} state={appState}>
+            {actions}
+          </Comp>
+        );
+      };
+
+      return RenderHeader;
+    }
+
+    return DefaultOverride;
+  }, [renderHeader]);
+
+  // DEPRECATED
+  const defaultHeaderActionsRender = useMemo((): Overrides["headerActions"] => {
+    if (renderHeaderActions) {
+      console.warn(
+        "`renderHeaderActions` is deprecated. Please use `overrides.headerActions` and the `usePuck` hook instead."
+      );
+
+      const RenderHeader = (props: any) => {
+        const Comp = renderHeaderActions!;
+
+        return <Comp {...props} dispatch={dispatch} state={appState}></Comp>;
+      };
+
+      return RenderHeader;
+    }
+
+    return DefaultOverride;
+  }, [renderHeader]);
+
+  // Load all plugins into the overrides
+  const loadedOverrides = useLoadedOverrides({
+    overrides: overrides,
+    plugins: plugins,
+  });
+
+  const CustomPuck = useMemo(
+    () => loadedOverrides.puck || DefaultOverride,
+    [loadedOverrides]
+  );
+
+  const CustomHeader = useMemo(
+    () => loadedOverrides.header || defaultHeaderRender,
+    [loadedOverrides]
+  );
+  const CustomHeaderActions = useMemo(
+    () => loadedOverrides.headerActions || defaultHeaderActionsRender,
+    [loadedOverrides]
+  );
+
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const selectedComponentConfig =
+    selectedItem && config.components[selectedItem.type];
+  const selectedComponentLabel = selectedItem
+    ? selectedComponentConfig?.["label"] ?? selectedItem.type.toString()
+    : "";
+
+  usePreviewModeHotkeys(dispatch, iframe.enabled);
 
   return (
-    <div className="puck">
-      <DragDropContext
-        onDragUpdate={(update) => {
-          setDraggedItem({ ...draggedItem, ...update });
-          onDragStartOrUpdate(update);
-        }}
-        onBeforeDragStart={(start) => {
-          onDragStartOrUpdate(start);
-          setItemSelector(null);
-        }}
-        onDragEnd={(droppedItem) => {
-          setDraggedItem(undefined);
-
-          // User cancel drag
-          if (!droppedItem.destination) {
-            return;
-          }
-
-          // New component
-          if (
-            droppedItem.source.droppableId === "component-list" &&
-            droppedItem.destination
-          ) {
-            dispatch({
-              type: "insert",
-              componentType: droppedItem.draggableId,
-              destinationIndex: droppedItem.destination!.index,
-              destinationZone: droppedItem.destination.droppableId,
-            });
-
-            setItemSelector({
-              index: droppedItem.destination!.index,
-              zone: droppedItem.destination.droppableId,
-            });
-
-            return;
-          } else {
-            const { source, destination } = droppedItem;
-
-            if (source.droppableId === destination.droppableId) {
-              dispatch({
-                type: "reorder",
-                sourceIndex: source.index,
-                destinationIndex: destination.index,
-                destinationZone: destination.droppableId,
-              });
-            } else {
-              dispatch({
-                type: "move",
-                sourceZone: source.droppableId,
-                sourceIndex: source.index,
-                destinationIndex: destination.index,
-                destinationZone: destination.droppableId,
-              });
-            }
-
-            setItemSelector({
-              index: destination.index,
-              zone: destination.droppableId,
-            });
-          }
+    <div className={`Puck ${getClassName()}`}>
+      <AppProvider
+        value={{
+          state: appState,
+          dispatch,
+          config,
+          plugins: plugins || [],
+          overrides: loadedOverrides,
+          history,
+          viewports,
+          iframe,
+          globalPermissions: {
+            delete: true,
+            drag: true,
+            duplicate: true,
+            insert: true,
+            edit: true,
+            ...permissions,
+          },
+          getPermissions: () => ({}),
+          refreshPermissions: () => null,
         }}
       >
-        <DropZoneProvider
-          value={{
-            data,
-            itemSelector,
-            setItemSelector,
-            config,
-            dispatch,
-            draggedItem,
-            placeholderStyle,
-            mode: "edit",
-            areaId: "root",
-          }}
-        >
-          <dropZoneContext.Consumer>
-            {(ctx) => {
-              let path =
-                ctx?.pathData && selectedItem
-                  ? ctx?.pathData[selectedItem?.props.id]
-                  : undefined;
-
-              if (path) {
-                path = [{ label: "Page", selector: null }, ...path];
-                path = path.slice(path.length - 2, path.length - 1);
-              }
-
-              return (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateAreas:
-                      '"header header header" "left editor right"',
-                    gridTemplateColumns: `${
-                      leftSidebarVisible ? "288px" : "0px"
-                    } auto 288px`,
-                    gridTemplateRows: "min-content auto",
-                    height: "100vh",
-                    position: "fixed",
-                    top: 0,
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                  }}
-                >
-                  <header
-                    style={{
-                      gridArea: "header",
-                      borderBottom: "1px solid var(--puck-color-grey-8)",
-                    }}
-                  >
-                    {renderHeader ? (
-                      renderHeader({
-                        children: (
+        <DragDropContext disableAutoScroll={dnd?.disableAutoScroll}>
+          <CustomPuck>
+            {children || (
+              <div
+                className={getLayoutClassName({
+                  leftSideBarVisible,
+                  menuOpen,
+                  mounted,
+                  rightSideBarVisible,
+                })}
+              >
+                <div className={getLayoutClassName("inner")}>
+                  <CustomHeader
+                    actions={
+                      <>
+                        <CustomHeaderActions>
                           <Button
                             onClick={() => {
-                              onPublish(data);
+                              onPublish && onPublish(data as G["UserData"]);
                             }}
                             icon={<Globe size="14px" />}
                           >
                             Publish
                           </Button>
-                        ),
-                        data,
-                        dispatch,
-                      })
-                    ) : (
-                      <div
-                        style={{
-                          display: "grid",
-                          padding: 16,
-                          gridTemplateAreas: '"left middle right"',
-                          gridTemplateColumns: "288px auto 288px",
-                          gridTemplateRows: "auto",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 16,
-                          }}
-                        >
-                          <IconButton
-                            onClick={() =>
-                              setLeftSidebarVisible(!leftSidebarVisible)
-                            }
-                            title="Toggle left sidebar"
+                        </CustomHeaderActions>
+                      </>
+                    }
+                  >
+                    <header className={getLayoutClassName("header")}>
+                      <div className={getLayoutClassName("headerInner")}>
+                        <div className={getLayoutClassName("headerToggle")}>
+                          <div
+                            className={getLayoutClassName("leftSideBarToggle")}
                           >
-                            <Sidebar />
-                          </IconButton>
+                            <IconButton
+                              onClick={() => {
+                                toggleSidebars("left");
+                              }}
+                              title="Toggle left sidebar"
+                            >
+                              <PanelLeft focusable="false" />
+                            </IconButton>
+                          </div>
+                          <div
+                            className={getLayoutClassName("rightSideBarToggle")}
+                          >
+                            <IconButton
+                              onClick={() => {
+                                toggleSidebars("right");
+                              }}
+                              title="Toggle right sidebar"
+                            >
+                              <PanelRight focusable="false" />
+                            </IconButton>
+                          </div>
                         </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "center",
-                            alignItems: "center",
-                          }}
-                        >
-                          <Heading rank={2} size="xs">
-                            {headerTitle || data.root.title || "Page"}
+                        <div className={getLayoutClassName("headerTitle")}>
+                          <Heading rank="2" size="xs">
+                            {headerTitle || rootProps.title || "Page"}
                             {headerPath && (
-                              <small style={{ fontWeight: 400, marginLeft: 4 }}>
-                                <code>{headerPath}</code>
-                              </small>
+                              <>
+                                {" "}
+                                <code
+                                  className={getLayoutClassName("headerPath")}
+                                >
+                                  {headerPath}
+                                </code>
+                              </>
                             )}
                           </Heading>
                         </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 16,
-                            justifyContent: "flex-end",
-                          }}
-                        >
-                          {renderHeaderActions &&
-                            renderHeaderActions({ data, dispatch })}
-                          <Button
-                            onClick={() => {
-                              onPublish(data);
-                            }}
-                            icon={<Globe size="14px" />}
-                          >
-                            Publish
-                          </Button>
+                        <div className={getLayoutClassName("headerTools")}>
+                          <div className={getLayoutClassName("menuButton")}>
+                            <IconButton
+                              onClick={() => {
+                                return setMenuOpen(!menuOpen);
+                              }}
+                              title="Toggle menu bar"
+                            >
+                              {menuOpen ? (
+                                <ChevronUp focusable="false" />
+                              ) : (
+                                <ChevronDown focusable="false" />
+                              )}
+                            </IconButton>
+                          </div>
+                          <MenuBar<G["UserData"]>
+                            appState={appState}
+                            dispatch={dispatch}
+                            onPublish={onPublish}
+                            menuOpen={menuOpen}
+                            renderHeaderActions={() => (
+                              <CustomHeaderActions>
+                                <Button
+                                  onClick={() => {
+                                    onPublish && onPublish(data);
+                                  }}
+                                  icon={<Globe size="14px" />}
+                                >
+                                  Publish
+                                </Button>
+                              </CustomHeaderActions>
+                            )}
+                            setMenuOpen={setMenuOpen}
+                          />
                         </div>
                       </div>
-                    )}
-                  </header>
-                  <div
-                    style={{
-                      gridArea: "left",
-                      background: "var(--puck-color-grey-11)",
-                      borderRight: "1px solid var(--puck-color-grey-8)",
-                      overflowY: "auto",
-                      display: "flex",
-                      flexDirection: "column",
-                    }}
-                  >
-                    <SidebarSection title="Components">
-                      <ComponentList config={config} />
+                    </header>
+                  </CustomHeader>
+                  <div className={getLayoutClassName("leftSideBar")}>
+                    <SidebarSection title="Components" noBorderTop>
+                      <Components />
                     </SidebarSection>
                     <SidebarSection title="Outline">
-                      {ctx?.activeZones &&
-                        ctx?.activeZones[rootDroppableId] && (
-                          <LayerTree
-                            data={data}
-                            label={
-                              areaContainsZones(data, "root")
-                                ? rootDroppableId
-                                : ""
-                            }
-                            zoneContent={data.content}
-                            setItemSelector={setItemSelector}
-                            itemSelector={itemSelector}
-                          />
-                        )}
-
-                      {Object.entries(findZonesForArea(data, "root")).map(
-                        ([zoneKey, zone]) => {
-                          return (
-                            <LayerTree
-                              key={zoneKey}
-                              data={data}
-                              label={zoneKey}
-                              zone={zoneKey}
-                              zoneContent={zone}
-                              setItemSelector={setItemSelector}
-                              itemSelector={itemSelector}
-                            />
-                          );
-                        }
-                      )}
+                      <Outline />
                     </SidebarSection>
                   </div>
-
-                  <div
-                    style={{
-                      background: "var(--puck-color-grey-10)",
-                      padding: 32,
-                      overflowY: "auto",
-                      gridArea: "editor",
-                      position: "relative",
-                    }}
-                    onClick={() => setItemSelector(null)}
-                    id="puck-frame"
-                  >
-                    <div
-                      className="puck-root"
-                      style={{
-                        background: "white",
-                        border: "1px solid var(--puck-color-grey-8)",
-                        zoom: 0.75,
-                      }}
+                  <Canvas />
+                  <div className={getLayoutClassName("rightSideBar")}>
+                    <SidebarSection
+                      noPadding
+                      noBorderTop
+                      showBreadcrumbs
+                      title={selectedItem ? selectedComponentLabel : "Page"}
                     >
-                      <Page data={data} {...data.root}>
-                        <DropZone zone={rootDroppableId} />
-                      </Page>
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      borderLeft: "1px solid var(--puck-color-grey-8)",
-                      overflowY: "auto",
-                      gridArea: "right",
-                      fontFamily: "var(--puck-font-stack)",
-                      display: "flex",
-                      flexDirection: "column",
-                    }}
-                  >
-                    <FieldWrapper data={data}>
-                      <SidebarSection
-                        noPadding
-                        breadcrumbs={path}
-                        breadcrumbClick={(breadcrumb) =>
-                          setItemSelector(breadcrumb.selector)
-                        }
-                        title={selectedItem ? selectedItem.type : "Page"}
-                      >
-                        {Object.keys(fields).map((fieldName) => {
-                          const field = fields[fieldName];
-
-                          const onChange = (value: any) => {
-                            let currentProps;
-                            let newProps;
-
-                            if (selectedItem) {
-                              currentProps = selectedItem.props;
-                            } else {
-                              currentProps = data.root;
-                            }
-
-                            if (fieldName === "_data") {
-                              // Reset the link if value is falsey
-                              if (!value) {
-                                const { locked, ..._meta } =
-                                  currentProps._meta || {};
-
-                                newProps = {
-                                  ...currentProps,
-                                  _data: undefined,
-                                  _meta: _meta,
-                                };
-                              } else {
-                                const changedFields = filter(
-                                  // filter out anything not supported by this component
-                                  value,
-                                  Object.keys(fields)
-                                );
-
-                                newProps = {
-                                  ...currentProps,
-                                  ...changedFields,
-                                  _data: value, // TODO perf - this is duplicative and will make payload larger
-                                  _meta: {
-                                    locked: Object.keys(changedFields),
-                                  },
-                                };
-                              }
-                            } else {
-                              newProps = {
-                                ...currentProps,
-                                [fieldName]: value,
-                              };
-                            }
-
-                            if (itemSelector) {
-                              dispatch({
-                                type: "replace",
-                                destinationIndex: itemSelector.index,
-                                destinationZone:
-                                  itemSelector.zone || rootDroppableId,
-                                data: { ...selectedItem, props: newProps },
-                              });
-                            } else {
-                              dispatch({
-                                type: "set",
-                                data: { root: newProps },
-                              });
-                            }
-                          };
-
-                          if (selectedItem && itemSelector) {
-                            return (
-                              <InputOrGroup
-                                key={`${selectedItem.props.id}_${fieldName}`}
-                                field={field}
-                                name={fieldName}
-                                label={field.label}
-                                readOnly={
-                                  getItem(
-                                    itemSelector,
-                                    data
-                                  )!.props._meta?.locked?.indexOf(fieldName) >
-                                  -1
-                                }
-                                value={selectedItem.props[fieldName]}
-                                onChange={onChange}
-                              />
-                            );
-                          } else {
-                            return (
-                              <InputOrGroup
-                                key={`page_${fieldName}`}
-                                field={field}
-                                name={fieldName}
-                                label={field.label}
-                                readOnly={
-                                  data.root._meta?.locked?.indexOf(fieldName) >
-                                  -1
-                                }
-                                value={data.root[fieldName]}
-                                onChange={onChange}
-                              />
-                            );
-                          }
-                        })}
-                      </SidebarSection>
-                    </FieldWrapper>
+                      <Fields />
+                    </SidebarSection>
                   </div>
                 </div>
-              );
-            }}
-          </dropZoneContext.Consumer>
-        </DropZoneProvider>
-      </DragDropContext>
+              </div>
+            )}
+          </CustomPuck>
+        </DragDropContext>
+      </AppProvider>
+      <div id="puck-portal-root" className={getClassName("portal")} />
     </div>
   );
 }
+
+Puck.Components = Components;
+Puck.Fields = Fields;
+Puck.Outline = Outline;
+Puck.Preview = Preview;

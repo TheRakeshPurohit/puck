@@ -1,10 +1,12 @@
 {
   "packages": [
-    "packages/adaptor-strapi",
+    "apps/docs",
     "packages/core",
     "packages/create-puck-app",
+    "packages/field-contentful",
+    "packages/plugin-emotion-cache",
     "packages/plugin-heading-analyzer"
   ],
-  "version": "0.7.0",
+  "version": "0.18.2",
   "npmClient": "yarn"
 }

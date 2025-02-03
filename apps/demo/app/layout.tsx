@@ -1,12 +1,5 @@
-import "@measured/puck/styles.css";
+import "@/core/styles.css";
 import "./styles.css";
-
-import { Inter } from "next/font/google";
-
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export default function RootLayout({
   children,
@@ -15,7 +8,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <head>
+        {process.env.NEXT_PUBLIC_PLAUSIBLE_DATA_DOMAIN && (
+          <script
+            defer
+            data-domain={process.env.NEXT_PUBLIC_PLAUSIBLE_DATA_DOMAIN}
+            src="https://plausible.io/js/plausible.js"
+          ></script>
+        )}
+      </head>
+      <body>
+        <div>{children}</div>
+      </body>
     </html>
   );
 }

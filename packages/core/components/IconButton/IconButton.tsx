@@ -1,7 +1,7 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, SyntheticEvent, useState } from "react";
 import styles from "./IconButton.module.css";
 import getClassNameFactory from "../../lib/get-class-name-factory";
-import { ClipLoader } from "react-spinners";
+import { Loader } from "../Loader";
 
 const getClassName = getClassNameFactory("IconButton", styles);
 
@@ -19,7 +19,7 @@ export const IconButton = ({
 }: {
   children: ReactNode;
   href?: string;
-  onClick?: (e: any) => void | Promise<void>;
+  onClick?: (e: SyntheticEvent) => void | Promise<void>;
   variant?: "primary" | "secondary";
   type?: "button" | "submit" | "reset";
   disabled?: boolean;
@@ -56,11 +56,12 @@ export const IconButton = ({
       href={href}
       title={title}
     >
+      <span className={getClassName("title")}>{title}</span>
       {children}
       {loading && (
         <>
           &nbsp;&nbsp;
-          <ClipLoader color="inherit" size="14px" />
+          <Loader size={14} />
         </>
       )}
     </ElementType>

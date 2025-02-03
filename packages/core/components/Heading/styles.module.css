@@ -1,6 +1,6 @@
 .Heading {
   display: block;
-  font-family: var(--puck-font-stack);
+  color: var(--puck-color-black);
   font-weight: 700;
   margin: 0;
 }
